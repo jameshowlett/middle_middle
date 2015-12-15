@@ -14,8 +14,8 @@ from bokeh.models import (
     )
 
 def make_datasources_for_poverty_comparison(idd_dataframe, years):
-    #  stacked bar graph with share of ages PVTAA[2..6]
-    poverty_age_codes = ['PVTAA' + str(x+2) for x in xrange(4)]
+    #  stacked bar graph with share of ages PVTAAx
+    poverty_age_codes = ['PVTAA' + str(x+1) for x in xrange(7)]
     
     return make_datasources_for_comparison(idd_dataframe, years, poverty_age_codes)
 
