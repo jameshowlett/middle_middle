@@ -3,12 +3,14 @@ import urllib.request
 import pandas as pd
 import copy
 
-def fetch_and_reshape_oecd_json(data_code,
-                                dimension_filter = 'all',
-                                time_and_other_filters = 'all?detail=Full'):
-    a=1
 
-    """the stats.oecd.org api [documentation](https://data.oecd.org/api/sdmx-json-documentation/)
+def fetch_and_reshape_oecd_json(data_code,
+                                dimension_filter='all',
+                                time_and_other_filters='all?detail=Full'):
+    """
+    Pull down and reshape a specific data set from stats.oecd.org
+
+    the stats.oecd.org api [documentation](https://data.oecd.org/api/sdmx-json-documentation/)
     outlines the taxonomy of a data request as:
 
     stats.oecd.org/sdmx-json/data/datasetcode/dimension_filter/time_and_other_filters
@@ -49,6 +51,15 @@ def fetch_and_reshape_oecd_json(data_code,
 
     For reshaping the data, the XML isn't necessary -- just fetch the data with "detail=Full"
     in the request.
+
+    :param data_code: a string indicating the stats.oecd.org data set to be fetched.
+    :param dimension_filter: a string conforming to
+       [the stats.oecd.org api documentation](https://data.oecd.org/api/sdmx-json-documentation/)
+       indicating how dimensions should be filtered. See function description.
+    :param time_and_other_filters: a string conforming to the stats.oecd.org api that indicates
+        how the time (and detail) dimensions should be filtered. See function description
+
+    :returns: a pandas DataFrame.
 
     Example input for a request for Income Disparity Data:
 
@@ -100,7 +111,6 @@ def fetch_and_reshape_oecd_json(data_code,
         will correspond to the '0' key in an observations dictionary.
         """
     metadata_stats_oecd_idd = stats_oecd_idd['structure']['dimensions']
-    print(stats_oecd_idd['structure'].keys())
 
     col_names = []
     for dim in metadata_stats_oecd_idd['series']:
@@ -116,12 +126,22 @@ def fetch_and_reshape_oecd_json(data_code,
     None => !!! this shouldn't be mapped.
     """
 
-    observation_attribute_map = stats_oecd_idd['structure']['attributes']['series']
-    attribute_column_names = [attribute_map['id'].lower() for attribute_map in observation_attribute_map]
-    #= [(x + "_id").lower() for x in attribute_ids]
-    #print(attribute_ids)
+    # need to pull observation statii, if they exist
+    observation_status_map = stats_oecd_idd['structure']['attributes']['observation'] # this is incorrectly named and should talk about series
+    attribute_series = stats_oecd_idd['structure']['attributes']['series'] # this is incorrectly named and should talk about series
+    attribute_column_names = [attribute_map['id'].lower() for attribute_map in attribute_series]
+    # = [(x + "_id").lower() for x in attribute_ids]
+    # print(attribute_ids)
 
-    for key, value in stats_oecd_idd['dataSets'][0]['series'].items():
+    # create dummy cases to speed testing
+    # pick up ['0:0:1', '0:17:6', '0:1:10']
+
+    test_data = {}
+    for x in ['0:0:1', '0:17:6', '0:1:10']:
+        test_data[x] = stats_oecd_idd['dataSets'][0]['series'][x]
+
+    observations_dict = test_data # stats_oecd_idd['dataSets'][0]['series']
+    for key, value in observations_dict.items():
         """
         Example (key, value):
         ('19:8:0:0:0',
@@ -130,17 +150,19 @@ def fetch_and_reshape_oecd_json(data_code,
         So, extract info from key, and value.attributes
         """
         data = pd.DataFrame(dict(zip(col_names, [[x] for x in key.split(":")])))
-        data_attributes = [str(x) for x in value['attributes']] # metadata should be in string form, since it's categorical
+        data_attributes = [str(x) for x in
+                           value['attributes']]  # metadata should be in string form, since it's categorical
         data = pd.concat([data,
                           pd.DataFrame(dict(zip(attribute_column_names, data_attributes)), index=[0])],
-                         axis = 1)
+                         axis=1)
 
+        # this needs to be modified to include observation statii
         observations = copy.copy(value['observations'])
 
         for time, measure in observations.items():
             observations[time] = measure[0]
 
-        observations = pd.DataFrame(list(observations.items()), columns=['time_period','observation'])
+        observations = pd.DataFrame(list(observations.items()), columns=['time_period', 'observation'])
 
         observations['location'] = data['location'].iloc[0]
 
@@ -150,7 +172,8 @@ def fetch_and_reshape_oecd_json(data_code,
                         how='outer')
 
         idd_dataframe = idd_dataframe.append(data, ignore_index=False)
-    return idd_dataframe, metadata_stats_oecd_idd, observation_attribute_map
+    return idd_dataframe, metadata_stats_oecd_idd, attribute_series
+
 
 def append_metadata_to_oecd_stats(idd_dataframe, metadata_stats_oecd_idd, observation_attribute_map):
     """
@@ -158,7 +181,7 @@ def append_metadata_to_oecd_stats(idd_dataframe, metadata_stats_oecd_idd, observ
 
     the returned JSON has a 'structure' object with 'dimensions'
     child that contains all the information to translate series
-    identifiers x:y:z:w:a into something human parsable.
+    identifiers x:y:z:w:a into something human parse-able.
 
     A series of merges should be anticipated. Hence, it makes
     sense to store all the metadata in a dictionary where the
@@ -198,11 +221,15 @@ def append_metadata_to_oecd_stats(idd_dataframe, metadata_stats_oecd_idd, observ
                                  on=key)
     return idd_dataframe
 
-def fetch_and_format_oecd_data(idd_base_url = 'http://stats.oecd.org/sdmx-json/data/IDD',
-                               dimension_filter = 'all', # grab all data
-                               time_filter = 'all?startTime=2001&endTime=2014',
-                               optional_filters = '&detail=Full'):
-    return append_metadata_to_oecd_stats(*fetch_oecd_data(idd_base_url, dimension_filter, time_filter, optional_filters))
+
+def fetch_and_format_oecd_data(idd_base_url='http://stats.oecd.org/sdmx-json/data/IDD',
+                               dimension_filter='all',  # grab all data
+                               time_filter='all?startTime=2001&endTime=2014',
+                               optional_filters='&detail=Full'):
+    return append_metadata_to_oecd_stats(
+        *fetch_oecd_data(idd_base_url, dimension_filter, time_filter, optional_filters))
+
 
 if __name__ == "__main__":
-    fetch_and_reshape_oecd_json("idd","all","all?detail=Full")
+    X = append_metadata_to_oecd_stats(*fetch_and_reshape_oecd_json("PDB_GR", "all", "all?detail=Full"))
+    X
