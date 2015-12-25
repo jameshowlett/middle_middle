@@ -112,29 +112,51 @@ def fetch_and_reshape_oecd_json(data_code,
         """
     oecd_structure = oecd_json['structure']
 
-    series_structure = {}
-    series_structure['dimensions'] = oecd_structure['dimensions']['series']
-    series_structure['attributes'] = oecd_structure['attributes']['series']
+    #~~~~~~~~~~~~~~~~~~
+    # process series
+    #~~~~~~~~~~~~~~~~~~
+
+    series_structure = {
+        'dimensions': oecd_structure['dimensions']['series'],
+        'attributes': oecd_structure['attributes']['series']
+    }
+
+    series_data_column_names = []
 
     series_dimension_names = []
     for series_dimension in series_structure['dimensions']:
-        series_dimension_names.append(series_dimension['id'].lower())
+        dimension_name = series_dimension['id'].lower()
+        series_dimension_names.append(dimension_name)
+        series_data_column_names.append(dimension_name)
 
     series_attribute_names = []
     for attribute in series_structure['attributes']:
-        series_attribute_names.append(attribute['id'].lower())
+        attribute_name = attribute['id'].lower()
+        series_attribute_names.append(attribute_name)
+        series_data_column_names.append(attribute_name)
 
-    observation_structure = {}
-    observation_structure['dimensions'] = oecd_structure['dimensions']['observation']
-    observation_structure['attributes'] = oecd_structure['attributes']['observation']
+    #~~~~~~~~~~~~~~~~~~
+    # process observation -- there has to be a better way to do this
+    #~~~~~~~~~~~~~~~~~~
 
-    observation_dimension_names = []
-    for observation_dimension in observation_structure['dimensions']:
-        observation_dimension_names.append(observation_dimension['id'].lower())
+    observation_structure = {
+        'dimensions': oecd_structure['dimensions']['observation'],
+        'attributes': oecd_structure['attributes']['observation']
+    }
+
+    observation_data_column_names = ['observation']
 
     observation_attribute_names = []
     for attribute in observation_structure['attributes']:
-        observation_attribute_names.append(attribute['id'].lower())
+        attribute_name = attribute['id'].lower()
+        observation_attribute_names.append(attribute_name)
+        observation_data_column_names.append(attribute_name)
+
+    observation_dimension_names = []
+    for observation_dimension in observation_structure['dimensions']:
+        dimension_name = observation_dimension['id'].lower()
+        observation_dimension_names.append(dimension_name)
+        observation_data_column_names.append(dimension_name)
 
     """
     The observation attributes come in a particularly ordered array, e.g.: [1, 20, 3, None]...
@@ -159,7 +181,7 @@ def fetch_and_reshape_oecd_json(data_code,
     for x in ['0:0:1', '0:17:6', '0:1:10']:
         test_data[x] = oecd_json['dataSets'][0]['series'][x]
 
-    observations_dict = test_data # oecd_json['dataSets'][0]['series']
+    observations_dict = test_data   # oecd_json['dataSets'][0]['series']
 
     oecd_dataframe = pd.DataFrame()
 
@@ -171,25 +193,12 @@ def fetch_and_reshape_oecd_json(data_code,
          'series_observations': {'0': [43696.0, None], '6': [45934.0, None]}})
         So, extract info from dimension_encoding, and series.attributes
         """
-        # making a dict with list-values allows for re-typing to DataFrame w/o specifying index
-        data = pd.DataFrame(dict(zip(series_dimension_names,
-                                     [[dimension_value] for dimension_value in dimension_encoding.split(":")]
-                                     )))
 
-         # metadata should be in string form, since it's categorical
-        series_attributes = [[str(attribute_value)] for attribute_value in series['attributes']]
+        series_data = [[dimension_value] for dimension_value in dimension_encoding.split(":")]
+        for attribute_value in series['attributes']:
+            series_data.append([str(attribute_value)])
 
-        data = pd.concat([data,
-                          pd.DataFrame(dict(zip(series_attribute_names, series_attributes)))],
-                         axis=1)
-
-        # this block doesn't need to be in this loop
-        observation_data_column_names = ['observation']
-        for attribute_name in observation_attribute_names:
-            observation_data_column_names.append(attribute_name)
-
-        for dimension_name in observation_dimension_names:
-            observation_data_column_names.append(dimension_name)
+        data = pd.DataFrame(dict(zip(series_data_column_names, series_data)))
 
         series_observations = []
 
