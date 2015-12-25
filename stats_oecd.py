@@ -21,9 +21,9 @@ def fetch_and_reshape_oecd_json(data_code,
     * we want stats for Australia and USA
         + their location codes are AUS, USA
     * we're interested in "GDP per capita, constant prices", and "GDP per hour worked, constant prices"
-        + their measure codes are T_GDPPOP_V, T_GDPHRS_
+        + their observation codes are T_GDPPOP_V, T_GDPHRS_
     * and we want to look at these measures through the perspectives of
-        + a valued indexed according to measure at 2010
+        + a valued indexed according to observation at 2010
             - this has attribute code 2010Y
         + Annual growth/change,
             - this has attribute code GR
@@ -32,7 +32,7 @@ def fetch_and_reshape_oecd_json(data_code,
     * we want all data between 1970 and 2014
         + we can use the filter "all?startTime=1970&endTime=2014"
     * we want the full detail of the data:
-        + append "&detail=Full" to our time filter
+        + append "&detail=Full" to our time_period filter
 
     According to the API, we separate dimension and other filters by "/", and
     inside the dimension filter we concatenate with "+" and separate with ".".
@@ -57,7 +57,7 @@ def fetch_and_reshape_oecd_json(data_code,
        [the stats.oecd.org api documentation](https://data.oecd.org/api/sdmx-json-documentation/)
        indicating how dimensions should be filtered. See function description.
     :param time_and_other_filters: a string conforming to the stats.oecd.org api that indicates
-        how the time (and detail) dimensions should be filtered. See function description
+        how the time_period (and detail) dimensions should be filtered. See function description
 
     :returns: a pandas DataFrame.
 
@@ -66,13 +66,13 @@ def fetch_and_reshape_oecd_json(data_code,
     idd_base_url = 'http://stats.oecd.org/sdmx-json/data/IDD'
     dimension_filter = 'all' # grab all data
     time_filter = 'all?startTime=2001&endTime=2014'
-    optional_filters = '&detail=Full' # pick up the measure unit's...
+    optional_filters = '&detail=Full' # pick up the observation unit's...
     """
 
     """parse json data into DataFrame:
 
     the json comes with a 'structure' section which explains how to
-    interpret the keys (e.g. 1:2:3:4:5) for the observations.
+    interpret the keys (e.g. 1:2:3:4:5) for the series_observations.
 
     We first need to parse the 'structure' to figure out what the
     dimension names (and order) is. Then, we need to unpack
@@ -80,20 +80,20 @@ def fetch_and_reshape_oecd_json(data_code,
     """
     idd_base_url = "http://stats.oecd.org/sdmx-json/data"
     data_query = idd_base_url + '/' + data_code + '/' + dimension_filter + '/' + time_and_other_filters
-    stats_oecd_idd = json.loads(urllib.request.urlopen(data_query).read().decode('utf-8'))
+    oecd_json = json.loads(urllib.request.urlopen(data_query).read().decode('utf-8'))
 
     """
-    stats_oecd_idd is a dictionary with keys:
+    oecd_json is a dictionary with keys:
         + structure -- a dict with keys ['annotations', 'attributes', 'dimensions', 'links', 'name', 'description'].
         These keys hold dictionaries as values, whose keys yield further information about the data structure. E.g.:
             - attributes yields a dict with keys ['dataSet', 'observation', 'series']
             - dimensions yields a dict with keys ['observation', 'series']
         Hence, structure.attributes.series contains information about the series' attributes, and
-        structure.dimensions.observation yields information about the dimension of observations.
-        + dataSets -- a list containing dictionary-formatted observations. E.g., one key:value pair in
+        structure.dimensions.observation yields information about the dimension of series_observations.
+        + dataSets -- a list containing dictionary-formatted series_observations. E.g., one dimension_encoding:series pair in
         one of these dictionaries could look like:
         '2:37:0:0:0': {'attributes': [0, 2, 0, None],
-                       'observations': {'0': [0.331, None],
+                       'series_observations': {'0': [0.331, None],
                                         '10': [0.313, None],
                                         '3': [0.324, None],
                                         '4': [0.307, None],
@@ -102,21 +102,39 @@ def fetch_and_reshape_oecd_json(data_code,
                                         '7': [0.32, None],
                                         '8': [0.328, None],
                                         '9': [0.305, None]}}
-        Which means we need to use stats_oecd_idd.structure.dimensions.series to "decode" the key, '2:37:0:0:0',
-        stats_oecd_idd.structure.attributes.series to decode the 'attributes' key, "[0, 2, 0, None]", and
-        stats_oecd_idd.structure.dimensions.observation to line up the keys of "observations" with actual time-periods.
+        Which means we need to use oecd_json.structure.dimensions.series to "decode" the dimension_encoding, '2:37:0:0:0',
+        oecd_json.structure.attributes.series to decode the 'attributes' dimension_encoding, "[0, 2, 0, None]", and
+        oecd_json.structure.dimensions.observation to line up the keys of "series_observations" with actual time_period-periods.
 
         The important thing to realize here is that even though the JSON pay-load is interpreted as a python dictionary,
-        the order the keys is crucial. Hence, the first key in stats_oecd_idd.structure.dimensions.observation[0].values
-        will correspond to the '0' key in an observations dictionary.
+        the order the keys is crucial. Hence, the first dimension_encoding in oecd_json.structure.dimensions.observation[0].values
+        will correspond to the '0' dimension_encoding in an series_observations dictionary.
         """
-    metadata_stats_oecd_idd = stats_oecd_idd['structure']['dimensions']
+    oecd_structure = oecd_json['structure']
 
-    col_names = []
-    for dim in metadata_stats_oecd_idd['series']:
-        col_names.append(dim['id'].lower())
+    series_structure = {}
+    series_structure['dimensions'] = oecd_structure['dimensions']['series']
+    series_structure['attributes'] = oecd_structure['attributes']['series']
 
-    idd_dataframe = pd.DataFrame()
+    series_dimension_names = []
+    for series_dimension in series_structure['dimensions']:
+        series_dimension_names.append(series_dimension['id'].lower())
+
+    series_attribute_names = []
+    for attribute in series_structure['attributes']:
+        series_attribute_names.append(attribute['id'].lower())
+
+    observation_structure = {}
+    observation_structure['dimensions'] = oecd_structure['dimensions']['observation']
+    observation_structure['attributes'] = oecd_structure['attributes']['observation']
+
+    observation_dimension_names = []
+    for observation_dimension in observation_structure['dimensions']:
+        observation_dimension_names.append(observation_dimension['id'].lower())
+
+    observation_attribute_names = []
+    for attribute in observation_structure['attributes']:
+        observation_attribute_names.append(attribute['id'].lower())
 
     """
     The observation attributes come in a particularly ordered array, e.g.: [1, 20, 3, None]...
@@ -127,52 +145,83 @@ def fetch_and_reshape_oecd_json(data_code,
     """
 
     # need to pull observation statii, if they exist
-    observation_status_map = stats_oecd_idd['structure']['attributes']['observation'] # this is incorrectly named and should talk about series
-    attribute_series = stats_oecd_idd['structure']['attributes']['series'] # this is incorrectly named and should talk about series
-    attribute_column_names = [attribute_map['id'].lower() for attribute_map in attribute_series]
-    # = [(x + "_id").lower() for x in attribute_ids]
-    # print(attribute_ids)
+    observation_status_map = oecd_json['structure']['attributes']['observation'] # this is incorrectly named and should talk about series
+    #attribute_series = series_structure['attributes'] #oecd_json['structure']['attributes']['series'] # this is incorrectly named and should talk about series
+
+    """
+    incorporate pattern declared above -- lines 121-127
+    """
 
     # create dummy cases to speed testing
     # pick up ['0:0:1', '0:17:6', '0:1:10']
 
     test_data = {}
     for x in ['0:0:1', '0:17:6', '0:1:10']:
-        test_data[x] = stats_oecd_idd['dataSets'][0]['series'][x]
+        test_data[x] = oecd_json['dataSets'][0]['series'][x]
 
-    observations_dict = test_data # stats_oecd_idd['dataSets'][0]['series']
-    for key, value in observations_dict.items():
+    observations_dict = test_data # oecd_json['dataSets'][0]['series']
+
+    oecd_dataframe = pd.DataFrame()
+
+    for dimension_encoding, series in observations_dict.items():
         """
-        Example (key, value):
+        Example (dimension_encoding, series):
         ('19:8:0:0:0',
         {'attributes': [0, 20, 0, None],
-         'observations': {'0': [43696.0, None], '6': [45934.0, None]}})
-        So, extract info from key, and value.attributes
+         'series_observations': {'0': [43696.0, None], '6': [45934.0, None]}})
+        So, extract info from dimension_encoding, and series.attributes
         """
-        data = pd.DataFrame(dict(zip(col_names, [[x] for x in key.split(":")])))
-        data_attributes = [str(x) for x in
-                           value['attributes']]  # metadata should be in string form, since it's categorical
+        # making a dict with list-values allows for re-typing to DataFrame w/o specifying index
+        data = pd.DataFrame(dict(zip(series_dimension_names,
+                                     [[dimension_value] for dimension_value in dimension_encoding.split(":")]
+                                     )))
+
+         # metadata should be in string form, since it's categorical
+        series_attributes = [[str(attribute_value)] for attribute_value in series['attributes']]
+
         data = pd.concat([data,
-                          pd.DataFrame(dict(zip(attribute_column_names, data_attributes)), index=[0])],
+                          pd.DataFrame(dict(zip(series_attribute_names, series_attributes)))],
                          axis=1)
 
-        # this needs to be modified to include observation statii
-        observations = copy.copy(value['observations'])
+        # this block doesn't need to be in this loop
+        observation_data_column_names = ['observation']
+        for attribute_name in observation_attribute_names:
+            observation_data_column_names.append(attribute_name)
 
-        for time, measure in observations.items():
-            observations[time] = measure[0]
+        for dimension_name in observation_dimension_names:
+            observation_data_column_names.append(dimension_name)
 
-        observations = pd.DataFrame(list(observations.items()), columns=['time_period', 'observation'])
+        series_observations = []
 
-        observations['location'] = data['location'].iloc[0]
+        for time_period, observation in series['observations'].items():
+            #tmp = {}
+
+            observation_data = [observation[0:1]]
+            for obs_status in observation[1:]:
+                observation_data.append([obs_status])
+
+            observation_data.append(time_period) # this may have to get changed in the structure of 'observations' changes
+
+            observation_data = dict(zip(observation_data_column_names, observation_data))
+            tmp = pd.DataFrame(observation_data)
+            series_observations.append(tmp)
+
+        series_observations = pd.concat(series_observations)
+        # add on location column for left-merge.
+        series_observations['location'] = data['location'].iloc[0]
 
         data = pd.merge(right=data,
-                        left=observations,
+                        left=series_observations,
                         on='location',
                         how='outer')
 
-        idd_dataframe = idd_dataframe.append(data, ignore_index=False)
-    return idd_dataframe, metadata_stats_oecd_idd, attribute_series
+        oecd_dataframe = oecd_dataframe.append(data, ignore_index=False)
+
+    """
+    now we need to merge on metadata. Go back and refactor column situation inside the loop
+    """
+    print(oecd_dataframe)
+    return oecd_dataframe, oecd_json_structure_dimensions, series_structure['attributes']
 
 
 def append_metadata_to_oecd_stats(idd_dataframe, metadata_stats_oecd_idd, observation_attribute_map):
