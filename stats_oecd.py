@@ -1,12 +1,13 @@
 import json
 import urllib.request
 import pandas as pd
+import numpy as np
 import copy
 
 
 def fetch_and_reshape_oecd_json(data_code,
                                 dimension_filter='all',
-                                time_and_other_filters='all?detail=Full'):
+                                time_and_other_filters='all?detail=Full&dimensionAtObservation=allDimensions'):
     """
     Pull down and reshape a specific data set from stats.oecd.org
 
@@ -90,8 +91,8 @@ def fetch_and_reshape_oecd_json(data_code,
             - dimensions yields a dict with keys ['observation', 'series']
         Hence, structure.attributes.series contains information about the series' attributes, and
         structure.dimensions.observation yields information about the dimension of series_observations.
-        + dataSets -- a list containing dictionary-formatted series_observations. E.g., one dimension_encoding:series pair in
-        one of these dictionaries could look like:
+        + dataSets -- a list containing dictionary-formatted series_observations. E.g., one dimension_encoding:series
+        pair in one of these dictionaries could look like:
         '2:37:0:0:0': {'attributes': [0, 2, 0, None],
                        'series_observations': {'0': [0.331, None],
                                         '10': [0.313, None],
@@ -102,19 +103,75 @@ def fetch_and_reshape_oecd_json(data_code,
                                         '7': [0.32, None],
                                         '8': [0.328, None],
                                         '9': [0.305, None]}}
-        Which means we need to use oecd_json.structure.dimensions.series to "decode" the dimension_encoding, '2:37:0:0:0',
-        oecd_json.structure.attributes.series to decode the 'attributes' dimension_encoding, "[0, 2, 0, None]", and
-        oecd_json.structure.dimensions.observation to line up the keys of "series_observations" with actual time_period-periods.
+        Which means we need to use oecd_json.structure.dimensions.series to "decode" the dimension_encoding,
+        '2:37:0:0:0', oecd_json.structure.attributes.series to decode the 'attributes' dimension_encoding,
+        "[0, 2, 0, None]", and oecd_json.structure.dimensions.observation to line up the keys of "series_observations"
+        with actual time_period-periods.
 
         The important thing to realize here is that even though the JSON pay-load is interpreted as a python dictionary,
-        the order the keys is crucial. Hence, the first dimension_encoding in oecd_json.structure.dimensions.observation[0].values
-        will correspond to the '0' dimension_encoding in an series_observations dictionary.
+        the order the keys is crucial. Hence, the first dimension_encoding in
+        oecd_json.structure.dimensions.observation[0].values will correspond to the '0' dimension_encoding in an
+        series_observations dictionary.
         """
     oecd_structure = oecd_json['structure']
 
-    #~~~~~~~~~~~~~~~~~~
+    """
+    When using a flat-format (e.g. appending '&dimensionAtObservation=allDimensions' to the end of the API request),
+    the returned payload looks something like:
+    oecd_json.dataSets[0] = {
+        '0:10:6:9': [0.581259, 0, None, 0, 0, None],
+        '0:11:10:10': [61.210162, 0, None, 1, 0, 0],
+        '0:1:9:40': [1.40398, 1, None, 0, 0, None]
+    }
+    Which means the :-separated string in the beginning encodes the time-dimension as the last digit.
+    Moreover, we can separate the reshaping task into two parts:
+        1. decode the :-separated string using oecd_json.structure.dimensions.observation
+        2. properly identify the observation attributes with oecd_json.attributes.observation
+    """
+
+    test_data = {}
+    for x in ['0:10:6:9', '0:11:10:10', '0:1:9:40']:
+        test_data[x] = oecd_json['dataSets'][0]['observations'][x]
+
+    column_names = []
+    dimensions_and_attributes = {}
+
+    for dimension in oecd_structure['dimensions']['observation']:
+        dimension_name = dimension['id'].lower()
+        column_names.append(dimension_name)
+        dimensions_and_attributes[dimension_name] = pd.DataFrame(dimension['values'])
+
+    column_names.append('observation')
+
+    for attribute in oecd_structure['attributes']['observation']:
+        attribute_name = attribute['id'].lower()
+        column_names.append(attribute_name)
+        dimensions_and_attributes[attribute_name] = pd.DataFrame(attribute['values'])
+
+    output = []
+    for dimensions, observation in test_data.items():
+        # make sure dimensions are appropriately cast as integers -- this helps merge along
+        # an index later and convert None's to NaN's
+        output.append([int(dimension) for dimension in dimensions.split(':')] + \
+                      [obs_or_attr if obs_or_attr is not None else np.nan for obs_or_attr in observation])
+
+    output = pd.DataFrame(output, columns=column_names)
+
+    print(output.dtypes)
+
+    for column_name, value_map in dimensions_and_attributes.items():
+        value_map.columns = [column_name + '_code', column_name + '_name']
+        output = pd.merge(left=output,
+                          right=value_map,
+                          left_on=column_name,
+                          right_index=True,
+                          how='left',
+                          sort=False)
+    print(output)
+
+
+
     # process series
-    #~~~~~~~~~~~~~~~~~~
 
     series_structure = {
         'dimensions': oecd_structure['dimensions']['series'],
@@ -135,9 +192,7 @@ def fetch_and_reshape_oecd_json(data_code,
         series_attribute_names.append(attribute_name)
         series_data_column_names.append(attribute_name)
 
-    #~~~~~~~~~~~~~~~~~~
     # process observation -- there has to be a better way to do this
-    #~~~~~~~~~~~~~~~~~~
 
     observation_structure = {
         'dimensions': oecd_structure['dimensions']['observation'],
@@ -283,11 +338,11 @@ def append_metadata_to_oecd_stats(idd_dataframe, metadata_stats_oecd_idd, observ
 def fetch_and_format_oecd_data(idd_base_url='http://stats.oecd.org/sdmx-json/data/IDD',
                                dimension_filter='all',  # grab all data
                                time_filter='all?startTime=2001&endTime=2014',
-                               optional_filters='&detail=Full'):
+                               optional_filters='&dimensionAtObservation=allDimensions&detail=Full'):
     return append_metadata_to_oecd_stats(
         *fetch_oecd_data(idd_base_url, dimension_filter, time_filter, optional_filters))
 
 
 if __name__ == "__main__":
-    X = append_metadata_to_oecd_stats(*fetch_and_reshape_oecd_json("PDB_GR", "all", "all?detail=Full"))
+    X = append_metadata_to_oecd_stats(*fetch_and_reshape_oecd_json("PDB_GR", "all", "all?detail=Full&dimensionAtObservation=allDimensions"))
     X
