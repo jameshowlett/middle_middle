@@ -81,6 +81,7 @@ def fetch_and_reshape_oecd_json(data_code,
     """
     idd_base_url = "http://stats.oecd.org/sdmx-json/data"
     data_query = idd_base_url + '/' + data_code + '/' + dimension_filter + '/' + time_and_other_filters
+    #data_query = 'http://stats.oecd.org/sdmx-json/data/QNA/AUS+AUT.GDP+B1_GE.CUR+VOBARSA.Q/all?startTime=2009-Q2&endTime=2011-Q4&dimensionAtObservation=allDimensions&detail=Full'
     oecd_json = json.loads(urllib.request.urlopen(data_query).read().decode('utf-8'))
 
     """
@@ -129,9 +130,9 @@ def fetch_and_reshape_oecd_json(data_code,
         2. properly identify the observation attributes with oecd_json.attributes.observation
     """
 
-    test_data = {}
-    for x in ['0:10:6:9', '0:11:10:10', '0:1:9:40']:
-        test_data[x] = oecd_json['dataSets'][0]['observations'][x]
+    #test_data = {}
+    #for x in ['0:10:6:9', '0:11:10:10', '0:1:9:40']:
+    #    test_data[x] = oecd_json['dataSets'][0]['observations'][x]
 
     column_names = []
     dimensions_and_attributes = {}
@@ -149,24 +150,31 @@ def fetch_and_reshape_oecd_json(data_code,
         dimensions_and_attributes[attribute_name] = pd.DataFrame(attribute['values'])
 
     output = []
-    for dimensions, observation in test_data.items():
+    for dimensions, observation in oecd_json['dataSets'][0]['observations'].items():
         # make sure dimensions are appropriately cast as integers -- this helps merge along
         # an index later and convert None's to NaN's
         output.append([int(dimension) for dimension in dimensions.split(':')] + \
                       [obs_or_attr if obs_or_attr is not None else np.nan for obs_or_attr in observation])
 
-    output = pd.DataFrame(output, columns=column_names)
+    output = pd.DataFrame(output, columns = column_names)
 
     print(output.dtypes)
 
     for column_name, value_map in dimensions_and_attributes.items():
+        if value_map.empty:
+            continue
+
         value_map.columns = [column_name + '_code', column_name + '_name']
-        output = pd.merge(left=output,
-                          right=value_map,
-                          left_on=column_name,
-                          right_index=True,
-                          how='left',
-                          sort=False)
+        try:
+            output = pd.merge(left = output,
+                              right = value_map,
+                              left_on = column_name,
+                              right_index = True,
+                              how = 'left',
+                              sort = False)
+        except Exception:
+            print(column_name)
+    output.to_csv("~/" + data_code + ".csv", index = False, sep = ';')
     print(output)
 
 
